@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+<title>BlindAssist AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2/dist/coco-ssd.min.js"></script>
+<style>
+  :root {
+    --bg: #07080D;
+    --surface: rgba(255,255,255,0.045);
+    --surface-raised: rgba(255,255,255,0.075);
+    --border-glass: rgba(255,255,255,0.12);
+    --text: #F5F5F5;
+    --text-dim: #A9ADBB;
+    --amber: #FFB300;
+    --violet: #A78BFA;
+    --cyan: #5EEAD4;
+    --pink: #F472B6;
+    --green: #3DDC84;
+    --red: #FF5C5C;
+    --focus: #7FD0FF;
+    --radius: 20px;
+    --glass-blur: 22px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: 'Atkinson Hyperlegible', system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    display: flex; flex-direction: column; align-items: center; padding: 0 0 40px 0;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  /* Ambient glassmorphism spheres + holographic glow, purely decorative */
+  .bg-orbs {
+    position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none;
+  }
+  .orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(60px);
+    opacity: 0.55;
+    animation: drift 22s ease-in-out infinite;
+  }
+  .orb-1 {
+    width: 380px; height: 380px; top: -120px; left: -100px;
+    background: radial-gradient(circle at 35% 35%, var(--violet), transparent 70%);
+    animation-delay: 0s;
+  }
+  .orb-2 {
+    width: 320px; height: 320px; top: 20%; right: -140px;
+    background: radial-gradient(circle at 40% 40%, var(--cyan), transparent 70%);
+    animation-delay: -7s;
+  }
+  .orb-3 {
+    width: 300px; height: 300px; bottom: -100px; left: 15%;
+    background: radial-gradient(circle at 45% 45%, var(--pink), transparent 70%);
+    animation-delay: -14s;
+  }
+  .orb-4 {
+    width: 260px; height: 260px; bottom: 10%; right: 5%;
+    background: radial-gradient(circle at 40% 40%, var(--amber), transparent 70%);
+    opacity: 0.35;
+    animation-delay: -4s;
+  }
+  @keyframes drift {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    33% { transform: translate(20px, -30px) scale(1.08); }
+    66% { transform: translate(-15px, 20px) scale(0.95); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .orb { animation: none; }
+  }
+
+  .skip-link {
+    position: absolute; left: -9999px; top: 0;
+    background: var(--amber); color: #000; padding: 12px 20px; z-index: 100; font-weight: 700;
+  }
+  .skip-link:focus { left: 12px; top: 12px; }
+
+  header { width: 100%; max-width: 640px; padding: 20px 20px 8px 20px; text-align: center; }
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace; letter-spacing: 0.14em; text-transform: uppercase;
+    font-size: 12px; color: var(--amber); margin: 0 0 6px 0;
+  }
+  h1 {
+    font-size: 30px; margin: 0 0 4px 0; letter-spacing: -0.01em; font-weight: 700;
+    background: linear-gradient(100deg, #FFFFFF 10%, var(--cyan) 45%, var(--violet) 70%, var(--pink) 95%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .subtitle { color: var(--text-dim); font-size: 15px; margin: 0; }
+
+  main {
+    width: 100%; max-width: 640px; padding: 16px 16px 0 16px;
+    display: flex; flex-direction: column; gap: 18px;
+  }
+
+  .emergency-banner {
+    display: none;
+    background: linear-gradient(135deg, rgba(255,92,92,0.35), rgba(255,92,92,0.12));
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid rgba(255,92,92,0.5);
+    color: #FFE5E5;
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    font-weight: 700;
+    font-size: 17px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    box-shadow: 0 0 40px rgba(255,92,92,0.25);
+  }
+  .emergency-banner.show { display: flex; }
+  .emergency-banner button {
+    background: rgba(255,255,255,0.12); color: #fff; border: 1px solid rgba(255,255,255,0.25); border-radius: 10px;
+    padding: 10px 14px; font-weight: 700; font-family: inherit; cursor: pointer; font-size: 15px;
+  }
+  .emergency-banner button:hover { background: rgba(255,255,255,0.2); }
+
+  .camera-wrap {
+    position: relative; width: 100%; aspect-ratio: 4 / 3;
+    background: #000; border-radius: var(--radius); overflow: hidden;
+    border: 1px solid var(--border-glass);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.03), 0 20px 60px rgba(0,0,0,0.5),
+      0 0 50px rgba(167,139,250,0.15), 0 0 50px rgba(94,234,212,0.08);
+  }
+  video, canvas.freeze, canvas.overlay {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+  }
+  canvas.freeze, canvas.overlay { position: absolute; inset: 0; }
+  canvas.freeze { display: none; }
+  canvas.overlay { pointer-events: none; }
+
+  .camera-status {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(10,10,14,0.55); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.1);
+    padding: 6px 12px; border-radius: 999px;
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+  .dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); }
+
+  .camera-flip {
+    position: absolute; top: 12px; right: 12px;
+    background: rgba(10,10,14,0.55); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.15); color: var(--text);
+    border-radius: 999px; padding: 8px 14px; font-size: 13px; font-family: inherit; cursor: pointer;
+  }
+  .camera-flip:focus-visible, button:focus-visible, [tabindex]:focus-visible, input:focus-visible {
+    outline: 3px solid var(--focus); outline-offset: 2px;
+  }
+
+  .detect-badge {
+    position: absolute; bottom: 12px; left: 12px;
+    background: rgba(10,10,14,0.6); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(61,220,132,0.4);
+    color: var(--green);
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    padding: 6px 12px; border-radius: 999px; display: none; align-items: center; gap: 6px;
+    box-shadow: 0 0 16px rgba(61,220,132,0.25);
+  }
+  .detect-badge.show { display: flex; }
+
+  .controls { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 10px 0 4px 0; }
+  .mic-btn {
+    position: relative; width: 112px; height: 112px; border-radius: 50%;
+    background: radial-gradient(circle at 32% 28%, #FFD166, var(--amber) 55%, #C97F00 100%);
+    border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: transform 0.15s ease, background 0.2s ease, box-shadow 0.3s ease;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.15) inset,
+      0 8px 24px rgba(0,0,0,0.4),
+      0 0 40px rgba(255,179,0,0.35),
+      0 0 70px rgba(167,139,250,0.2);
+  }
+  .mic-btn:active { transform: scale(0.95); }
+  .mic-btn svg { width: 42px; height: 42px; }
+  .mic-btn.listening {
+    background: radial-gradient(circle at 32% 28%, #FF9E9E, var(--red) 55%, #A32323 100%);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.15) inset, 0 8px 24px rgba(0,0,0,0.4), 0 0 50px rgba(255,92,92,0.45);
+  }
+  .mic-ring { position: absolute; inset: -12px; border-radius: 50%; border: 3px solid var(--amber); opacity: 0; }
+  .mic-btn.listening .mic-ring { animation: pulse-ring 1.4s ease-out infinite; border-color: var(--red); }
+  @keyframes pulse-ring { 0% { transform: scale(0.9); opacity: 0.9; } 100% { transform: scale(1.5); opacity: 0; } }
+
+  .mic-label { font-size: 15px; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; min-height: 20px; text-align: center; }
+
+  .action-row { display: flex; gap: 10px; width: 100%; justify-content: center; flex-wrap: wrap; }
+  .action-btn {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface);
+    backdrop-filter: blur(var(--glass-blur)); -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--border-glass); color: var(--text);
+    padding: 12px 16px; border-radius: 14px; font-family: inherit; font-size: 15px; font-weight: 700;
+    cursor: pointer; min-height: 48px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    transition: background 0.2s ease, transform 0.15s ease;
+  }
+  .action-btn:hover { background: var(--surface-raised); transform: translateY(-1px); }
+  .action-btn.primary {
+    background: linear-gradient(135deg, rgba(255,179,0,0.9), rgba(255,179,0,0.65));
+    color: #1a1200; border-color: rgba(255,179,0,0.6);
+    box-shadow: 0 4px 24px rgba(255,179,0,0.3);
+  }
+  .action-btn.primary:hover { background: linear-gradient(135deg, #ffc233, #ffb300); }
+  .action-btn.active {
+    background: linear-gradient(135deg, rgba(61,220,132,0.85), rgba(61,220,132,0.55));
+    color: #06210f; border-color: rgba(61,220,132,0.6);
+    box-shadow: 0 4px 24px rgba(61,220,132,0.3);
+  }
+  .action-btn.danger {
+    background: linear-gradient(135deg, rgba(255,92,92,0.85), rgba(255,92,92,0.55));
+    color: #2b0000; border-color: rgba(255,92,92,0.6);
+    box-shadow: 0 4px 24px rgba(255,92,92,0.3);
+  }
+
+  details.commands, details.settings {
+    background: var(--surface);
+    backdrop-filter: blur(var(--glass-blur)); -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--border-glass); border-radius: var(--radius); padding: 4px 16px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  }
+  details.commands summary {
+    cursor: pointer; padding: 10px 0; font-weight: 700; font-size: 15px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  details.commands ul { margin: 0 0 12px 0; padding-left: 20px; color: var(--text-dim); font-size: 14px; line-height: 1.7; }
+  details.commands code {
+    color: var(--cyan); font-family: 'JetBrains Mono', monospace;
+    background: rgba(94,234,212,0.1); padding: 1px 6px; border-radius: 6px;
+  }
+
+  details.settings summary { cursor: pointer; padding: 10px 0; font-weight: 700; font-size: 15px; }
+  .settings-grid { display: flex; flex-direction: column; gap: 12px; padding-bottom: 14px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 13px; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
+  .field input {
+    background: rgba(255,255,255,0.06); border: 1px solid var(--border-glass); color: var(--text);
+    padding: 12px 14px; border-radius: 10px; font-size: 16px; font-family: inherit;
+  }
+  .save-btn {
+    background: linear-gradient(135deg, #ffc233, var(--amber)); color: #1a1200; border: none; border-radius: 10px;
+    padding: 12px 16px; font-weight: 700; font-family: inherit; cursor: pointer; font-size: 15px; align-self: flex-start;
+    box-shadow: 0 4px 20px rgba(255,179,0,0.3);
+  }
+  .settings-note { font-size: 12px; color: #71768A; margin: 0; }
+
+  section.log-section { display: flex; flex-direction: column; gap: 10px; }
+  .log-heading { font-family: 'JetBrains Mono', monospace; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); margin: 0; }
+  #log { display: flex; flex-direction: column; gap: 12px; max-height: 42vh; overflow-y: auto; padding-right: 4px; }
+  .entry {
+    padding: 14px 16px; border-radius: 14px; font-size: 17px; line-height: 1.5;
+    backdrop-filter: blur(var(--glass-blur)); -webkit-backdrop-filter: blur(var(--glass-blur));
+  }
+  .entry.you {
+    background: var(--surface); border: 1px solid var(--border-glass);
+    align-self: flex-end; max-width: 85%;
+  }
+  .entry.assistant {
+    background: var(--surface-raised);
+    border: 1px solid var(--border-glass);
+    border-left: 3px solid var(--cyan);
+    box-shadow: 0 0 24px rgba(94,234,212,0.08);
+  }
+  .entry.system {
+    background: var(--surface-raised);
+    border: 1px solid var(--border-glass);
+    border-left: 3px solid var(--violet);
+    box-shadow: 0 0 24px rgba(167,139,250,0.08);
+  }
+  .entry .role { display: block; font-family: 'JetBrains Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); margin-bottom: 4px; }
+  .empty-state { color: var(--text-dim); font-size: 15px; padding: 10px 4px; }
+
+  footer { max-width: 640px; width: 100%; padding: 10px 20px 0 20px; text-align: center; }
+  footer p { color: #71768A; font-size: 12px; font-family: 'JetBrains Mono', monospace; line-height: 1.6; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mic-btn.listening .mic-ring { animation: none; opacity: 0.6; }
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<a href="#main-content" class="skip-link">Skip to main content</a>
+
+<div class="bg-orbs" aria-hidden="true">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+  <div class="orb orb-4"></div>
+</div>
+
+<header>
+  <p class="eyebrow">Prototype — voice, vision &amp; object detection</p>
+  <h1>BlindAssist AI</h1>
+  <p class="subtitle">Speak a command, or tap the mic and ask anything.</p>
+</header>
+
+<main id="main-content">
+
+  <div class="emergency-banner" id="emergencyBanner" role="alert">
+    <span id="emergencyText">Emergency mode active</span>
+    <button id="emergencyCallBtn">Call emergency contact</button>
+    <button id="emergencyDismiss">Dismiss</button>
+  </div>
+
+  <div class="camera-wrap">
+    <video id="video" autoplay playsinline muted aria-hidden="true"></video>
+    <canvas id="freezeCanvas" class="freeze" aria-hidden="true"></canvas>
+    <canvas id="overlayCanvas" class="overlay" aria-hidden="true"></canvas>
+    <div class="camera-status">
+      <span class="dot" id="camDot"></span>
+      <span id="camStatusText">starting camera…</span>
+    </div>
+    <div class="detect-badge" id="detectBadge">live object detection</div>
+    <button class="camera-flip" id="flipBtn" aria-label="Switch camera">Flip</button>
+  </div>
+  <canvas id="captureCanvas" style="display:none"></canvas>
+
+  <div class="controls">
+    <button id="micBtn" class="mic-btn" aria-label="Tap to speak a command">
+      <div class="mic-ring" aria-hidden="true"></div>
+      <svg viewBox="0 0 24 24" fill="none" stroke="#1a1200" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8" y1="23" x2="16" y2="23"/>
+      </svg>
+    </button>
+    <p class="mic-label" id="micLabel" role="status" aria-live="polite">Tap to speak</p>
+
+    <div class="action-row">
+      <button class="action-btn primary" id="describeBtn">Describe scene</button>
+      <button class="action-btn" id="readBtn">Read text</button>
+      <button class="action-btn" id="currencyBtn">Currency</button>
+      <button class="action-btn" id="detectToggleBtn">Start object detection</button>
+    </div>
+    <div class="action-row">
+      <button class="action-btn" id="whereBtn">Where am I</button>
+      <button class="action-btn" id="findPhoneBtn">Find my phone</button>
+      <button class="action-btn danger" id="emergencyBtn">Emergency</button>
+      <button class="action-btn" id="stopBtn">Stop speaking</button>
+    </div>
+  </div>
+
+  <details class="commands">
+    <summary>Voice commands you can say</summary>
+    <ul>
+      <li><code>"Open camera"</code> — makes sure the camera is running</li>
+      <li><code>"What's in front of me?"</code> — describes the scene</li>
+      <li><code>"Read this"</code> — reads visible text aloud</li>
+      <li><code>"What denomination is this note?"</code> — Indian currency check</li>
+      <li><code>"Start / stop object detection"</code> — continuous live detection</li>
+      <li><code>"Call Mom"</code> or <code>"Call emergency"</code></li>
+      <li><code>"Send message to Mom saying I'll be late"</code></li>
+      <li><code>"Where am I?"</code> — speaks your current location</li>
+      <li><code>"Find my phone"</code> — plays a sound + vibrates this device</li>
+      <li><code>"Emergency"</code> or <code>"help me"</code> — alert + call emergency contact</li>
+      <li>Anything else — asked directly to the camera as an open question</li>
+    </ul>
+  </details>
+
+  <details class="settings">
+    <summary>Contacts &amp; settings</summary>
+    <div class="settings-grid">
+      <div class="field">
+        <label for="momNumber">Mom's phone number (for "call Mom")</label>
+        <input type="tel" id="momNumber" placeholder="+91 90000 00000" />
+      </div>
+      <div class="field">
+        <label for="emergencyNumber">Emergency contact number</label>
+        <input type="tel" id="emergencyNumber" placeholder="+91 90000 00000" />
+      </div>
+      <button class="save-btn" id="saveContactsBtn">Save</button>
+      <p class="settings-note">Stored only in this browser tab's memory for this session — nothing is uploaded. You'll need to re-enter these if you reload the page.</p>
+    </div>
+  </details>
+
+  <section class="log-section" aria-label="Conversation history">
+    <p class="log-heading">Conversation</p>
+    <div id="log" aria-live="polite">
+      <p class="empty-state" id="emptyState">Nothing yet. Try tapping the mic and saying "what's in front of me?"</p>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <p>Prototype only. Object detection runs a general-purpose model and won't recognize doors or road signs specifically. Currency and scene descriptions come from an AI vision model and can be wrong — verify anything safety-critical (crossing streets, stairs, hazards, cash amounts) independently. Calling and messaging open your phone's native apps; they don't send anything automatically.</p>
+</footer>
+
+<script>
+(function () {
+  const video = document.getElementById('video');
+  const captureCanvas = document.getElementById('captureCanvas');
+  const freezeCanvas = document.getElementById('freezeCanvas');
+  const overlayCanvas = document.getElementById('overlayCanvas');
+  const camDot = document.getElementById('camDot');
+  const camStatusText = document.getElementById('camStatusText');
+  const flipBtn = document.getElementById('flipBtn');
+  const micBtn = document.getElementById('micBtn');
+  const micLabel = document.getElementById('micLabel');
+  const describeBtn = document.getElementById('describeBtn');
+  const readBtn = document.getElementById('readBtn');
+  const currencyBtn = document.getElementById('currencyBtn');
+  const detectToggleBtn = document.getElementById('detectToggleBtn');
+  const detectBadge = document.getElementById('detectBadge');
+  const whereBtn = document.getElementById('whereBtn');
+  const findPhoneBtn = document.getElementById('findPhoneBtn');
+  const emergencyBtn = document.getElementById('emergencyBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const log = document.getElementById('log');
+  const emptyState = document.getElementById('emptyState');
+  const emergencyBanner = document.getElementById('emergencyBanner');
+  const emergencyCallBtn = document.getElementById('emergencyCallBtn');
+  const emergencyDismiss = document.getElementById('emergencyDismiss');
+  const momNumberInput = document.getElementById('momNumber');
+  const emergencyNumberInput = document.getElementById('emergencyNumber');
+  const saveContactsBtn = document.getElementById('saveContactsBtn');
+
+  let currentStream = null;
+  let facingMode = 'environment';
+  let recognizing = false;
+  let recognition = null;
+  let cocoModel = null;
+  let detecting = false;
+  let detectLoopHandle = null;
+  let lastAnnounced = {};
+  let findPhoneInterval = null;
+  let findPhoneAudioCtx = null;
+
+  const contacts = { mom: '', emergency: '' };
+
+  function speak(text) {
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.rate = 1.02;
+    utter.pitch = 1.0;
+    window.speechSynthesis.speak(utter);
+  }
+  stopBtn.addEventListener('click', () => window.speechSynthesis.cancel());
+
+  function addEntry(role, text) {
+    if (emptyState) emptyState.remove();
+    const div = document.createElement('div');
+    div.className = 'entry ' + (role === 'you' ? 'you' : role === 'system' ? 'system' : 'assistant');
+    const roleSpan = document.createElement('span');
+    roleSpan.className = 'role';
+    roleSpan.textContent = role === 'you' ? 'You' : role === 'system' ? 'System' : 'BlindAssist';
+    const body = document.createElement('span');
+    body.textContent = text;
+    div.appendChild(roleSpan);
+    div.appendChild(body);
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    return div;
+  }
+  function setStatus(msg) { micLabel.textContent = msg; }
+
+  saveContactsBtn.addEventListener('click', () => {
+    contacts.mom = momNumberInput.value.trim();
+    contacts.emergency = emergencyNumberInput.value.trim();
+    addEntry('system', 'Contacts saved for this session.');
+    speak('Contacts saved.');
+  });
+
+  function callNumber(number, label) {
+    if (!number) {
+      speak("I don't have a number saved for " + label + ". Add it in contacts and settings.");
+      addEntry('assistant', "No number saved for " + label + ". Open Contacts & settings to add one.");
+      return;
+    }
+    speak('Calling ' + label + '.');
+    addEntry('assistant', 'Calling ' + label + ' (' + number + ')…');
+    window.location.href = 'tel:' + number.replace(/\s+/g, '');
+  }
+
+  async function startCamera() {
+    try {
+      if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+      camStatusText.textContent = 'starting camera…';
+      camDot.classList.remove('live');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 960 } },
+        audio: false
+      });
+      currentStream = stream;
+      video.srcObject = stream;
+      camStatusText.textContent = 'camera live';
+      camDot.classList.add('live');
+    } catch (err) {
+      camStatusText.textContent = 'camera unavailable';
+      addEntry('assistant', 'I could not access the camera: ' + err.message + '. Please allow camera permission and reload.');
+    }
+  }
+
+  flipBtn.addEventListener('click', () => {
+    facingMode = facingMode === 'environment' ? 'user' : 'environment';
+    startCamera();
+  });
+
+  function captureFrameBase64() {
+    const w = video.videoWidth || 1280;
+    const h = video.videoHeight || 960;
+    captureCanvas.width = w; captureCanvas.height = h;
+    captureCanvas.getContext('2d').drawImage(video, 0, 0, w, h);
+    freezeCanvas.width = w; freezeCanvas.height = h;
+    freezeCanvas.getContext('2d').drawImage(video, 0, 0, w, h);
+    freezeCanvas.style.display = 'block';
+    setTimeout(() => { freezeCanvas.style.display = 'none'; }, 500);
+    return captureCanvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+  }
+
+  async function callClaudeVision(base64Image, systemPrompt, question) {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1000,
+        system: systemPrompt,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64Image } },
+            { type: "text", text: question }
+          ]
+        }]
+      })
+    });
+    if (!response.ok) throw new Error("API error " + response.status);
+    const data = await response.json();
+    return data.content.filter(b => b.type === "text").map(b => b.text).join("\n").trim()
+      || "I couldn't generate a response just now.";
+  }
+
+  const SCENE_SYSTEM = "You are a calm, precise visual assistant for a blind or low-vision user who cannot see the image. " +
+    "Describe only what is clearly visible. Prioritize: immediate safety hazards (steps, curbs, obstacles, moving vehicles), " +
+    "then people present, then key objects and layout, then readable text if any. " +
+    "Be concise (2-4 sentences unless asked for more detail), concrete, and use spatial language " +
+    "(e.g. 'a chair about two steps ahead on your left'). Never guess identities of people. " +
+    "If asked to read text, read it verbatim and clearly. If the image is unclear or nothing relevant is visible, say so plainly.";
+
+  const CURRENCY_SYSTEM = "You are identifying Indian currency notes for a blind or low-vision user. " +
+    "Look at the note in the image and state the denomination if you can identify it (10, 20, 50, 100, 200, 500, or 2000 rupees). " +
+    "Base your answer on visible color, size, and printed numerals/text. " +
+    "If you cannot confidently identify the denomination, say so clearly rather than guessing. " +
+    "Keep the answer to one short sentence, then always add: 'Please verify with a trusted person or currency app if this is an important transaction.'";
+
+  async function runVisionQuery(question, youLabel, systemPrompt) {
+    setStatus('looking…');
+    addEntry('you', youLabel);
+    const thinkingEntry = addEntry('assistant', 'Looking…');
+    try {
+      const img = captureFrameBase64();
+      const answer = await callClaudeVision(img, systemPrompt || SCENE_SYSTEM, question);
+      thinkingEntry.querySelector('span:last-child').textContent = answer;
+      speak(answer);
+      setStatus('Tap to speak');
+    } catch (err) {
+      const msg = "Sorry, I ran into a problem: " + err.message;
+      thinkingEntry.querySelector('span:last-child').textContent = msg;
+      speak(msg);
+      setStatus('Tap to speak');
+    }
+  }
+
+  describeBtn.addEventListener('click', () => runVisionQuery(
+    "Describe the scene in front of the camera for someone who cannot see it, focusing on safety and layout.",
+    "Describe scene", SCENE_SYSTEM));
+
+  readBtn.addEventListener('click', () => runVisionQuery(
+    "Find and read aloud any visible text in this image, verbatim, in a clear reading order. If there is no readable text, say so.",
+    "Read text", SCENE_SYSTEM));
+
+  currencyBtn.addEventListener('click', () => runVisionQuery(
+    "What Indian currency note denomination is shown in this image?",
+    "Check currency", CURRENCY_SYSTEM));
+
+  const overlayCtx = overlayCanvas.getContext('2d');
+
+  async function ensureModelLoaded() {
+    if (cocoModel) return cocoModel;
+    setStatus('loading detection model…');
+    addEntry('system', 'Loading the object detection model (first time only)…');
+    cocoModel = await cocoSsd.load();
+    addEntry('system', 'Object detection model ready.');
+    setStatus('Tap to speak');
+    return cocoModel;
+  }
+
+  function resizeOverlay() {
+    overlayCanvas.width = video.clientWidth;
+    overlayCanvas.height = video.clientHeight;
+  }
+
+  function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  async function detectLoop() {
+    if (!detecting) return;
+    resizeOverlay();
+    try {
+      const predictions = await cocoModel.detect(video);
+      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      const scaleX = overlayCanvas.width / (video.videoWidth || overlayCanvas.width);
+      const scaleY = overlayCanvas.height / (video.videoHeight || overlayCanvas.height);
+
+      let best = null;
+      predictions.forEach(p => {
+        if (p.score < 0.55) return;
+        const x = p.bbox[0], y = p.bbox[1], w = p.bbox[2], h = p.bbox[3];
+        const area = w * h;
+        overlayCtx.strokeStyle = '#FFB300';
+        overlayCtx.lineWidth = 3;
+        overlayCtx.strokeRect(x * scaleX, y * scaleY, w * scaleX, h * scaleY);
+        overlayCtx.fillStyle = 'rgba(255,179,0,0.85)';
+        overlayCtx.font = '14px monospace';
+        overlayCtx.fillText(p.class, x * scaleX + 4, y * scaleY + 16);
+        if (!best || area > best.area) best = { label: p.class, area: area };
+      });
+
+      if (best) {
+        const now = Date.now();
+        const lastTime = lastAnnounced[best.label] || 0;
+        if (now - lastTime > 5000) {
+          lastAnnounced[best.label] = now;
+          const msg = capitalize(best.label) + ' detected in front of you.';
+          addEntry('assistant', msg);
+          speak(msg);
+        }
+      }
+    } catch (e) {
+      // skip a bad frame silently, keep loop going
+    }
+    detectLoopHandle = setTimeout(detectLoop, 1200);
+  }
+
+  async function startDetection() {
+    try {
+      await ensureModelLoaded();
+      detecting = true;
+      detectBadge.classList.add('show');
+      detectToggleBtn.textContent = 'Stop object detection';
+      detectToggleBtn.classList.add('active');
+      addEntry('system', 'Live object detection started.');
+      speak('Object detection started.');
+      detectLoop();
+    } catch (err) {
+      addEntry('assistant', 'Could not start object detection: ' + err.message);
+      speak('Sorry, I could not start object detection.');
+    }
+  }
+
+  function stopDetection() {
+    detecting = false;
+    if (detectLoopHandle) clearTimeout(detectLoopHandle);
+    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    detectBadge.classList.remove('show');
+    detectToggleBtn.textContent = 'Start object detection';
+    detectToggleBtn.classList.remove('active');
+    addEntry('system', 'Object detection stopped.');
+    speak('Object detection stopped.');
+  }
+
+  detectToggleBtn.addEventListener('click', () => { detecting ? stopDetection() : startDetection(); });
+
+  function whereAmI() {
+    setStatus('finding location…');
+    addEntry('you', 'Where am I?');
+    if (!navigator.geolocation) {
+      addEntry('assistant', 'Location is not supported in this browser.');
+      speak('Location is not supported in this browser.');
+      setStatus('Tap to speak');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const latitude = pos.coords.latitude, longitude = pos.coords.longitude;
+      try {
+        const res = await fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + latitude + '&lon=' + longitude);
+        const data = await res.json();
+        const addr = data.display_name || ('latitude ' + latitude.toFixed(4) + ', longitude ' + longitude.toFixed(4));
+        addEntry('assistant', 'You are near: ' + addr);
+        speak('You are near ' + addr);
+      } catch (e) {
+        const fallback = 'latitude ' + latitude.toFixed(4) + ', longitude ' + longitude.toFixed(4);
+        addEntry('assistant', 'Coordinates: ' + fallback + ' (could not look up the address).');
+        speak('I found your coordinates but could not look up the street address.');
+      }
+      setStatus('Tap to speak');
+    }, (err) => {
+      addEntry('assistant', 'Could not get your location: ' + err.message);
+      speak('Sorry, I could not get your location. Please check location permission.');
+      setStatus('Tap to speak');
+    }, { enableHighAccuracy: true, timeout: 10000 });
+  }
+  whereBtn.addEventListener('click', whereAmI);
+
+  function findMyPhone() {
+    addEntry('you', 'Find my phone');
+    addEntry('system', 'Playing a loud tone and vibrating this device for a few seconds.');
+    speak('Playing a sound now.');
+    if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400, 200, 400]);
+    try {
+      findPhoneAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      let count = 0;
+      findPhoneInterval = setInterval(() => {
+        if (count >= 6) { clearInterval(findPhoneInterval); return; }
+        const osc = findPhoneAudioCtx.createOscillator();
+        const gain = findPhoneAudioCtx.createGain();
+        osc.frequency.value = 1200;
+        osc.connect(gain);
+        gain.connect(findPhoneAudioCtx.destination);
+        gain.gain.setValueAtTime(0.3, findPhoneAudioCtx.currentTime);
+        osc.start();
+        osc.stop(findPhoneAudioCtx.currentTime + 0.4);
+        count++;
+      }, 700);
+    } catch (e) {
+      addEntry('assistant', 'Could not play a sound on this device.');
+    }
+  }
+  findPhoneBtn.addEventListener('click', findMyPhone);
+
+  function triggerEmergency() {
+    emergencyBanner.classList.add('show');
+    addEntry('system', 'Emergency mode triggered.');
+    speak('Emergency mode activated.');
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        const latitude = pos.coords.latitude, longitude = pos.coords.longitude;
+        addEntry('system', 'Current location: ' + latitude.toFixed(5) + ', ' + longitude.toFixed(5));
+      }, () => {});
+    }
+  }
+  emergencyBtn.addEventListener('click', triggerEmergency);
+  emergencyDismiss.addEventListener('click', () => emergencyBanner.classList.remove('show'));
+  emergencyCallBtn.addEventListener('click', () => callNumber(contacts.emergency, 'your emergency contact'));
+
+  function sendMessage(name, number, body) {
+    if (!number) {
+      speak("I don't have a number saved for " + name + ".");
+      addEntry('assistant', "No number saved for " + name + ". Add it in Contacts & settings.");
+      return;
+    }
+    addEntry('assistant', 'Opening a message to ' + name + ': "' + body + '"');
+    speak('Opening a message to ' + name + '. You will need to tap send in your messaging app.');
+    window.location.href = 'sms:' + number.replace(/\s+/g, '') + '?body=' + encodeURIComponent(body);
+  }
+
+  function routeCommand(transcript) {
+    const t = transcript.toLowerCase().trim();
+
+    if (/open camera/.test(t)) {
+      addEntry('you', transcript);
+      if (currentStream) { addEntry('assistant', 'Camera is already on.'); speak('Camera is already on.'); }
+      else { startCamera(); addEntry('assistant', 'Opening camera.'); }
+      return true;
+    }
+    if (/(start|begin).*(object )?detection/.test(t)) {
+      addEntry('you', transcript);
+      startDetection();
+      return true;
+    }
+    if (/stop.*(object )?detection/.test(t)) {
+      addEntry('you', transcript);
+      stopDetection();
+      return true;
+    }
+    if (/(currency|rupee|note|denomination)/.test(t)) {
+      runVisionQuery("What Indian currency note denomination is shown in this image?", transcript, CURRENCY_SYSTEM);
+      return true;
+    }
+    if (/^read this|^read it|^read text|^read\b/.test(t)) {
+      runVisionQuery("Find and read aloud any visible text in this image, verbatim, in a clear reading order. If there is no readable text, say so.", transcript, SCENE_SYSTEM);
+      return true;
+    }
+    if (/what.*(in front|around me|do you see|can you see)/.test(t)) {
+      runVisionQuery("Describe the scene in front of the camera for someone who cannot see it, focusing on safety and layout.", transcript, SCENE_SYSTEM);
+      return true;
+    }
+    if (/where am i\b/.test(t)) {
+      whereAmI();
+      return true;
+    }
+    if (/find my phone/.test(t)) {
+      findMyPhone();
+      return true;
+    }
+    if (/emergency|help me|^sos\b/.test(t)) {
+      addEntry('you', transcript);
+      triggerEmergency();
+      return true;
+    }
+    const callMatch = t.match(/call (my )?(\w+)/);
+    if (callMatch) {
+      addEntry('you', transcript);
+      const name = callMatch[2];
+      if (name === 'mom' || name === 'mother') callNumber(contacts.mom, 'Mom');
+      else if (name === 'emergency') callNumber(contacts.emergency, 'your emergency contact');
+      else { addEntry('assistant', "I only have Mom and your emergency contact saved right now."); speak("I only have Mom and an emergency contact saved right now."); }
+      return true;
+    }
+    const sendMatch = t.match(/send (a )?message to (\w+)(?: saying| that says)? (.+)/);
+    if (sendMatch) {
+      addEntry('you', transcript);
+      const name = sendMatch[2];
+      const body = sendMatch[3];
+      const number = (name === 'mom' || name === 'mother') ? contacts.mom : contacts.emergency;
+      sendMessage(capitalize(name), number, body);
+      return true;
+    }
+    if (/send (a )?message/.test(t)) {
+      addEntry('you', transcript);
+      const msg = 'Say it like this: "send message to Mom saying I will be late."';
+      addEntry('assistant', msg);
+      speak(msg);
+      return true;
+    }
+
+    return false;
+  }
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (SpeechRecognition) {
+    recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      recognizing = false;
+      micBtn.classList.remove('listening');
+      const handled = routeCommand(transcript);
+      if (!handled) {
+        runVisionQuery(transcript, transcript, SCENE_SYSTEM);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      recognizing = false;
+      micBtn.classList.remove('listening');
+      setStatus('Tap to speak');
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        addEntry('assistant', 'Microphone access was blocked. Please allow microphone permission.');
+      }
+    };
+
+    recognition.onend = () => {
+      recognizing = false;
+      micBtn.classList.remove('listening');
+      if (micLabel.textContent === 'listening…') setStatus('Tap to speak');
+    };
+
+    micBtn.addEventListener('click', () => {
+      if (recognizing) { recognition.stop(); return; }
+      window.speechSynthesis.cancel();
+      recognizing = true;
+      micBtn.classList.add('listening');
+      setStatus('listening…');
+      try { recognition.start(); } catch (e) {}
+    });
+  } else {
+    micBtn.addEventListener('click', () => {
+      addEntry('assistant', 'Voice input is not supported in this browser. Try Chrome or Safari, or use the buttons below the camera instead.');
+    });
+    setStatus('Voice input unsupported here — use buttons below');
+  }
+
+  startCamera();
+  window.addEventListener('resize', resizeOverlay);
+})();
+</script>
+
+</body>
+</html>
